@@ -1,0 +1,6 @@
+nvidia-container-runtime /usr/bin
+nvidia-ctk /usr/bin
+nvidia-cdi-hook /usr/bin
+deployments/systemd/nvidia-cdi-refresh.service /lib/systemd/system/
+deployments/systemd/nvidia-cdi-refresh.path /lib/systemd/system/
+deployments/systemd/nvidia-cdi-refresh.env /etc/nvidia-container-toolkit/

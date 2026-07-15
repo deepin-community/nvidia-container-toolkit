@@ -1,4 +1,46 @@
 #!/usr/bin/make -f
+# -*- makefile -*-
+
+#export DH_VERBOSE=1
+
+export GO111MODULE=on
 
 %:
-	dh $@
+	dh $@ --buildsystem=golang
+
+override_dh_auto_configure:
+	# Go modules don't need configure
+
+override_dh_auto_test:
+	# Tests require specific GPU hardware, skip during build
+
+override_dh_installchangelogs:
+	rm -f CHANGELOG.md
+	dh_installchangelogs
+
+GIT_COMMIT := $(shell git describe --match="" --dirty --long --always --abbrev=40 2>/dev/null || echo "")
+PKG_VERSION := $(shell dpkg-parsechangelog --show-field=Version | sed 's/-[0-9]\+$$//')
+LDFLAGS := -s -w '-extldflags=-Wl,-export-dynamic -Wl,-unresolved-symbols=ignore-in-object-files -Wl,-z,lazy' -X github.com/NVIDIA/nvidia-container-toolkit/internal/info.gitCommit=$(GIT_COMMIT) -X github.com/NVIDIA/nvidia-container-toolkit/internal/info.version=$(PKG_VERSION)
+
+override_dh_auto_build:
+	go build -ldflags "$(LDFLAGS)" github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-ctk
+	go build -ldflags "$(LDFLAGS)" github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-container-runtime
+	go build -ldflags "$(LDFLAGS)" github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-container-runtime-hook
+	go build -ldflags "$(LDFLAGS)" github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-cdi-hook
+	go build -ldflags "$(LDFLAGS)" github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-container-runtime.cdi
+	go build -ldflags "$(LDFLAGS)" github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-container-runtime.legacy
+
+override_dh_auto_clean:
+	rm -f nvidia-ctk nvidia-container-runtime nvidia-container-runtime-hook nvidia-cdi-hook
+	rm -f nvidia-container-runtime.cdi nvidia-container-runtime.legacy
+
+override_dh_fixperms:
+	dh_fixperms
+	chmod 755 debian/nvidia-container-toolkit/usr/bin/nvidia-container-runtime-hook || true
+	chmod 755 debian/nvidia-container-toolkit-base/usr/bin/nvidia-container-runtime || true
+	chmod 755 debian/nvidia-container-toolkit-base/usr/bin/nvidia-ctk || true
+	chmod 755 debian/nvidia-container-toolkit-base/usr/bin/nvidia-cdi-hook || true
+	chmod 755 debian/nvidia-container-toolkit-operator-extensions/usr/bin/nvidia-container-runtime.cdi || true
+	chmod 755 debian/nvidia-container-toolkit-operator-extensions/usr/bin/nvidia-container-runtime.legacy || true
+	chmod 644 debian/nvidia-container-toolkit-base/lib/systemd/system/nvidia-cdi-refresh.service || true
+	chmod 644 debian/nvidia-container-toolkit-base/lib/systemd/system/nvidia-cdi-refresh.path || true
