@@ -1,5 +1,18 @@
+nvidia-container-toolkit (1.19.1-1deepin1) unstable; urgency=medium
+
+  * Limit supported architectures to amd64 and arm64
+  * Set GOTOOLCHAIN=local to prevent automatic toolchain download
+  * Add debian/patches/downgrade-go-version.patch to downgrade go
+    version requirements from 1.25.0 to 1.22 for build environment
+    compatibility
+  * Add debian/patches/fix-go-122-compatibility.patch to replace
+    Go 1.23+ APIs (os.OpenRoot, strings.SplitSeq, bytes.SplitSeq)
+    with Go 1.22 compatible equivalents
+
+ -- lichenggang <lichenggang@uniontech.com>  Thu, 16 Jul 2026 09:43:45 +0800
+
 nvidia-container-toolkit (1.19.1-1) unstable; urgency=medium
 
   * Initial release.
 
- -- lichenggang <lichenggang@deepin.org>  Wed, 15 Jul 2026 17:43:44 +0800
+ -- lichenggang <lichenggang@uniontech.com>  Wed, 15 Jul 2026 17:43:44 +0800

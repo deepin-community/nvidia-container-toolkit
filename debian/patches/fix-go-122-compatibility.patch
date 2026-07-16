@@ -1,0 +1,250 @@
+diff --git a/cmd/nvidia-cdi-hook/disable-device-node-modification/disable-device-node-modification.go b/cmd/nvidia-cdi-hook/disable-device-node-modification/disable-device-node-modification.go
+index 2a4ce53..0244e48 100644
+--- a/cmd/nvidia-cdi-hook/disable-device-node-modification/disable-device-node-modification.go
++++ b/cmd/nvidia-cdi-hook/disable-device-node-modification/disable-device-node-modification.go
+@@ -90,13 +90,7 @@ func run(_ context.Context, _ *cli.Command, cfg *options) error {
+ 		return fmt.Errorf("failed to determined container root: %w", err)
+ 	}
+ 
+-	containerRoot, err := os.OpenRoot(containerRootDirPath)
+-	if err != nil {
+-		return fmt.Errorf("failed to open root: %w", err)
+-	}
+-	defer containerRoot.Close()
+-
+-	return createParamsFileInContainer(containerRoot, modifiedParamsFileContents)
++	return createParamsFileInContainer(containerRootDirPath, modifiedParamsFileContents)
+ }
+ 
+ func getModifiedNVIDIAParamsContents() ([]byte, error) {
+diff --git a/cmd/nvidia-cdi-hook/disable-device-node-modification/params_linux.go b/cmd/nvidia-cdi-hook/disable-device-node-modification/params_linux.go
+index 61340bf..2ca6314 100644
+--- a/cmd/nvidia-cdi-hook/disable-device-node-modification/params_linux.go
++++ b/cmd/nvidia-cdi-hook/disable-device-node-modification/params_linux.go
+@@ -29,11 +29,9 @@ import (
+ 	"golang.org/x/sys/unix"
+ )
+ 
+-func createParamsFileInContainer(containerRoot *os.Root, contents []byte) error {
+-	containerRootDirPath := containerRoot.Name()
+-
++func createParamsFileInContainer(containerRootDirPath string, contents []byte) error {
+ 	hookScratchDirPath := "/run/nvidia-ctk-hook" + uuid.NewString()
+-	if err := containerRoot.MkdirAll(hookScratchDirPath[1:], 0755); err != nil {
++	if err := os.MkdirAll(filepath.Join(containerRootDirPath, hookScratchDirPath[1:]), 0755); err != nil {
+ 		return fmt.Errorf("error creating hook scratch folder: %w", err)
+ 	}
+ 
+@@ -46,7 +44,7 @@ func createParamsFileInContainer(containerRoot *os.Root, contents []byte) error
+ 	}
+ 
+ 	modifiedParamsFilePath := filepath.Join(hookScratchDirPath, "nvct-params")
+-	if _, err := containerRoot.OpenFile(modifiedParamsFilePath[1:], os.O_CREATE|os.O_RDONLY|os.O_TRUNC, 0444); err != nil {
++	if _, err := os.OpenFile(filepath.Join(containerRootDirPath, modifiedParamsFilePath[1:]), os.O_CREATE|os.O_RDONLY|os.O_TRUNC, 0444); err != nil {
+ 		return fmt.Errorf("error creating modified params file: %w", err)
+ 	}
+ 
+diff --git a/internal/ldconfig/ldconfig.go b/internal/ldconfig/ldconfig.go
+index c761efc..da50448 100644
+--- a/internal/ldconfig/ldconfig.go
++++ b/internal/ldconfig/ldconfig.go
+@@ -191,28 +191,24 @@ func (l *Ldconfig) UpdateLDCache() error {
+ }
+ 
+ func (l *Ldconfig) prepareRoot() (string, error) {
+-	root, err := os.OpenRoot(l.inRoot)
+-	if err != nil {
+-		return "", fmt.Errorf("failed to open root: %w", err)
+-	}
+-	defer root.Close()
++	rootDir := l.inRoot
+ 
+ 	// To prevent leaking the parent proc filesystem, we create a new proc mount
+ 	// in the specified root.
+-	if err := mountProc(root); err != nil {
++	if err := mountProc(rootDir); err != nil {
+ 		return "", fmt.Errorf("error mounting /proc: %w", err)
+ 	}
+ 
+ 	// We mount the host ldconfig before we pivot root since host paths are not
+ 	// visible after the pivot root operation.
+-	ldconfigPath, err := mountLdConfig(l.ldconfigPath, root)
++	ldconfigPath, err := mountLdConfig(l.ldconfigPath, rootDir)
+ 	if err != nil {
+ 		return "", fmt.Errorf("error mounting host ldconfig: %w", err)
+ 	}
+ 
+ 	// We pivot to the container root for the new process, this further limits
+ 	// access to the host.
+-	if err := l.pivotRoot(root); err != nil {
++	if err := l.pivotRoot(rootDir); err != nil {
+ 		return "", fmt.Errorf("error running pivot_root: %w", err)
+ 	}
+ 
+@@ -521,8 +517,7 @@ func debianSystemSearchPaths() []string {
+ 	return paths
+ }
+ 
+-func (l *Ldconfig) pivotRoot(root *os.Root) error {
+-	rootDir := root.Name()
++func (l *Ldconfig) pivotRoot(rootDir string) error {
+ 	// We select the function to pivot the root based on whether pivot_root is
+ 	// supported.
+ 	// See https://github.com/opencontainers/runc/blob/c3d127f6e8d9f6c06d78b8329cafa8dd39f6236e/libcontainer/rootfs_linux.go#L207-L216
+diff --git a/internal/ldconfig/ldconfig_linux.go b/internal/ldconfig/ldconfig_linux.go
+index eabfc01..3b93f2c 100644
+--- a/internal/ldconfig/ldconfig_linux.go
++++ b/internal/ldconfig/ldconfig_linux.go
+@@ -184,8 +184,7 @@ func chroot() error {
+ // mountLdConfig mounts the host ldconfig to the mount namespace of the hook.
+ // We use WithProcfd to perform the mount operations to ensure that the changes
+ // are persisted across the pivot root.
+-func mountLdConfig(hostLdconfigPath string, containerRoot *os.Root) (string, error) {
+-	containerRootDirPath := containerRoot.Name()
++func mountLdConfig(hostLdconfigPath string, containerRootDirPath string) (string, error) {
+ 
+ 	hostLdconfigInfo, err := os.Stat(hostLdconfigPath)
+ 	if err != nil {
+@@ -194,7 +193,7 @@ func mountLdConfig(hostLdconfigPath string, containerRoot *os.Root) (string, err
+ 
+ 	hookScratchDirPath := "/run/nvidia-ctk-hook/" + uuid.NewString()
+ 	ldconfigPath := filepath.Join(hookScratchDirPath, "ldconfig")
+-	if err := containerRoot.MkdirAll(hookScratchDirPath[1:], 0755); err != nil {
++	if err := os.MkdirAll(filepath.Join(containerRootDirPath, hookScratchDirPath[1:]), 0755); err != nil {
+ 		return "", fmt.Errorf("error creating hook scratch folder: %w", err)
+ 	}
+ 
+@@ -206,7 +205,7 @@ func mountLdConfig(hostLdconfigPath string, containerRoot *os.Root) (string, err
+ 		return "", fmt.Errorf("error creating tmpfs: %w", err)
+ 	}
+ 
+-	if _, err := containerRoot.OpenFile(ldconfigPath[1:], os.O_CREATE|os.O_RDWR|os.O_TRUNC, hostLdconfigInfo.Mode()); err != nil {
++	if _, err := os.OpenFile(filepath.Join(containerRootDirPath, ldconfigPath[1:]), os.O_CREATE|os.O_RDWR|os.O_TRUNC, hostLdconfigInfo.Mode()); err != nil {
+ 		return "", fmt.Errorf("error creating ldconfig: %w", err)
+ 	}
+ 
+@@ -222,12 +221,12 @@ func mountLdConfig(hostLdconfigPath string, containerRoot *os.Root) (string, err
+ }
+ 
+ // mountProc mounts a clean proc filesystem in the new root.
+-func mountProc(newroot *os.Root) error {
+-	if err := newroot.MkdirAll("proc", 0755); err != nil {
++func mountProc(newroot string) error {
++	if err := os.MkdirAll(filepath.Join(newroot, "proc"), 0755); err != nil {
+ 		return err
+ 	}
+ 
+-	target := filepath.Join(newroot.Name(), "proc")
++	target := filepath.Join(newroot, "proc")
+ 	return unix.Mount("proc", target, "proc", 0, "")
+ }
+ 
+diff --git a/pkg/nvcdi/spec/spec.go b/pkg/nvcdi/spec/spec.go
+index 2efdb0d..ea56bca 100644
+--- a/pkg/nvcdi/spec/spec.go
++++ b/pkg/nvcdi/spec/spec.go
+@@ -64,13 +64,7 @@ func (s *spec) Save(path string) error {
+ 		return fmt.Errorf("failed to write spec: %w", err)
+ 	}
+ 
+-	specDirAsRoot, err := os.OpenRoot(specDir)
+-	if err != nil {
+-		return fmt.Errorf("failed to open root: %w", err)
+-	}
+-	defer specDirAsRoot.Close()
+-
+-	if err := specDirAsRoot.Chmod(filename, s.permissions); err != nil {
++	if err := os.Chmod(filepath.Join(specDir, filename), s.permissions); err != nil {
+ 		return fmt.Errorf("failed to set permissions on spec file: %w", err)
+ 	}
+ 
+@@ -83,16 +77,8 @@ func (s *spec) WriteTo(w io.Writer) (int64, error) {
+ 	if err != nil {
+ 		return 0, err
+ 	}
+-	tmpDir, tmpFileName := filepath.Split(tmpFile.Name())
+ 
+-	tmpDirRoot, err := os.OpenRoot(tmpDir)
+-	if err != nil {
+-		return 0, err
+-	}
+-	defer tmpDirRoot.Close()
+-	defer func() {
+-		_ = tmpDirRoot.Remove(tmpFileName)
+-	}()
++	defer os.Remove(tmpFile.Name())
+ 
+ 	if err := s.Save(tmpFile.Name()); err != nil {
+ 		return 0, err
+@@ -102,7 +88,7 @@ func (s *spec) WriteTo(w io.Writer) (int64, error) {
+ 		return 0, fmt.Errorf("failed to close temporary file: %w", err)
+ 	}
+ 
+-	savedFile, err := tmpDirRoot.Open(tmpFileName)
++	savedFile, err := os.Open(tmpFile.Name())
+ 	if err != nil {
+ 		return 0, fmt.Errorf("failed to open temporary file: %w", err)
+ 	}
+diff --git a/vendor/github.com/prometheus/procfs/mountinfo.go b/vendor/github.com/prometheus/procfs/mountinfo.go
+index 9414a12..0b0db34 100644
+--- a/vendor/github.com/prometheus/procfs/mountinfo.go
++++ b/vendor/github.com/prometheus/procfs/mountinfo.go
+@@ -147,7 +147,7 @@ func mountOptionsParseOptionalFields(o []string) (map[string]string, error) {
+ // mountOptionsParser parses the mount options, superblock options.
+ func mountOptionsParser(mountOptions string) map[string]string {
+ 	opts := make(map[string]string)
+-	for opt := range strings.SplitSeq(mountOptions, ",") {
++	for _, opt := range strings.Split(mountOptions, ",") {
+ 		splitOption := strings.Split(opt, "=")
+ 		if len(splitOption) < 2 {
+ 			key := splitOption[0]
+diff --git a/vendor/github.com/prometheus/procfs/mountstats.go b/vendor/github.com/prometheus/procfs/mountstats.go
+index e503cb3..529d850 100644
+--- a/vendor/github.com/prometheus/procfs/mountstats.go
++++ b/vendor/github.com/prometheus/procfs/mountstats.go
+@@ -383,7 +383,7 @@ func parseMountStatsNFS(s *bufio.Scanner, statVersion string) (*MountStatsNFS, e
+ 			if stats.Opts == nil {
+ 				stats.Opts = map[string]string{}
+ 			}
+-			for opt := range strings.SplitSeq(ss[1], ",") {
++			for _, opt := range strings.Split(ss[1], ",") {
+ 				split := strings.Split(opt, "=")
+ 				if len(split) == 2 {
+ 					stats.Opts[split[0]] = split[1]
+diff --git a/vendor/github.com/prometheus/procfs/proc_status.go b/vendor/github.com/prometheus/procfs/proc_status.go
+index 1ed2bce..5e1e5be 100644
+--- a/vendor/github.com/prometheus/procfs/proc_status.go
++++ b/vendor/github.com/prometheus/procfs/proc_status.go
+@@ -94,7 +94,7 @@ func (p Proc) NewStatus() (ProcStatus, error) {
+ 
+ 	s := ProcStatus{PID: p.PID}
+ 
+-	for line := range strings.SplitSeq(string(data), "\n") {
++	for _, line := range strings.Split(string(data), "\n") {
+ 		if !bytes.Contains([]byte(line), []byte(":")) {
+ 			continue
+ 		}
+diff --git a/vendor/github.com/prometheus/procfs/zoneinfo.go b/vendor/github.com/prometheus/procfs/zoneinfo.go
+index 806e171..9ab464a 100644
+--- a/vendor/github.com/prometheus/procfs/zoneinfo.go
++++ b/vendor/github.com/prometheus/procfs/zoneinfo.go
+@@ -17,7 +17,6 @@
+ package procfs
+ 
+ import (
+-	"bytes"
+ 	"fmt"
+ 	"os"
+ 	"regexp"
+@@ -88,9 +87,9 @@ func parseZoneinfo(zoneinfoData []byte) ([]Zoneinfo, error) {
+ 
+ 	zoneinfo := []Zoneinfo{}
+ 
+-	for block := range bytes.SplitSeq(zoneinfoData, []byte("\nNode")) {
++	for _, block := range strings.Split(string(zoneinfoData), "\nNode") {
+ 		var zoneinfoElement Zoneinfo
+-		for line := range strings.SplitSeq(string(block), "\n") {
++		for _, line := range strings.Split(string(block), "\n") {
+ 
+ 			if nodeZone := nodeZoneRE.FindStringSubmatch(line); nodeZone != nil {
+ 				zoneinfoElement.Node = nodeZone[1]
