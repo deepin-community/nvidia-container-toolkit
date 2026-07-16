@@ -1,2 +1,3 @@
 downgrade-go-version.patch
 fix-go-122-compatibility.patch
+allow-multiple-driver-library-paths.patch

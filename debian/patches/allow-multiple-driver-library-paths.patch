@@ -1,0 +1,349 @@
+Description: Allow multiple driver library paths
+ On some systems (e.g. Debian), the driver libraries may be located in
+ multiple paths on the system. This change allows these driver libraries
+ to be found by locating all libraries with the expected version suffix.
+ Also fixes a build breakage where the GetDriverLibDirectories() return type
+ change (string -> []string) left an unused parameter in NewDriverLibraryDiscoverer.
+Author: Guo Lv <reddevillg@gmail.com>
+Origin: https://github.com/NVIDIA/nvidia-container-toolkit/commit/9859c30cdd42ca149e19658646360c62e771ed5a
+Last-Update: 2026-07-16
+
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+diff --git a/internal/discover/graphics.go b/internal/discover/graphics.go
+index 21c9c14d..33f6061a 100644
+--- a/internal/discover/graphics.go
++++ b/internal/discover/graphics.go
+@@ -121,7 +121,7 @@ func newGraphicsLibrariesDiscoverer(logger logger.Interface, driver *root.Driver
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to get driver version: %w", err)
+ 	}
+-	cudaLibRoot, err := driver.GetDriverLibDirectory()
++	cudaLibRoots, err := driver.GetDriverLibDirectories()
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to get libcuda.so parent directory: %w", err)
+ 	}
+@@ -152,7 +152,7 @@ func newGraphicsLibrariesDiscoverer(logger logger.Interface, driver *root.Driver
+ 		lookup.NewFileLocator(
+ 			lookup.WithLogger(logger),
+ 			lookup.WithRoot(driver.Root),
+-			lookup.WithSearchPaths(buildXOrgSearchPaths(cudaLibRoot)...),
++			lookup.WithSearchPaths(buildXOrgSearchPaths(cudaLibRoots...)...),
+ 			lookup.WithCount(1),
+ 		),
+ 		driver.Root,
+@@ -239,8 +239,17 @@ func (d graphicsDriverLibraries) isDriverLibrary(filename string, libraryName st
+ 	return match
+ }
+ 
+-// buildXOrgSearchPaths returns the ordered list of search paths for XOrg files.
+-func buildXOrgSearchPaths(libRoot string) []string {
++// buildXOrgSearchPaths returns search paths from all roots
++func buildXOrgSearchPaths(roots ...string) []string {
++	var paths []string
++	for _, root := range roots {
++		paths = append(paths, buildXOrgSearchPathsAtRoot(root)...)
++	}
++	return paths
++}
++
++// buildXOrgSearchPathsAtRoot returns the ordered list of search paths for XOrg files.
++func buildXOrgSearchPathsAtRoot(libRoot string) []string {
+ 	var paths []string
+ 	if libRoot != "" {
+ 		paths = append(paths,
+diff --git a/internal/lookup/root/cuda_test.go b/internal/lookup/root/cuda_test.go
+index 4f548238..7584a723 100644
+--- a/internal/lookup/root/cuda_test.go
++++ b/internal/lookup/root/cuda_test.go
+@@ -34,33 +34,45 @@ func TestLocate(t *testing.T) {
+ 
+ 	testCases := []struct {
+ 		description   string
+-		libcudaPath   string
+-		expected      string
++		libPaths      []string
++		expected      []string
+ 		expectedError error
+ 	}{
+ 		{
+ 			description:   "no libcuda does not resolve library",
+-			libcudaPath:   "",
+-			expected:      "",
++			libPaths:      nil,
++			expected:      nil,
+ 			expectedError: lookup.ErrNotFound,
+ 		},
+ 		{
+ 			description:   "no-ldcache searches /usr/lib64",
+-			libcudaPath:   "/usr/lib64/libcuda.so.123.34",
+-			expected:      "/usr/lib64",
++			libPaths:      []string{"/usr/lib64/libcuda.so.123.34"},
++			expected:      []string{"/usr/lib64"},
+ 			expectedError: nil,
+ 		},
+ 		{
+ 			description:   "no-ldcache searches /usr/lib64 for libnvidia-ml.so.",
+-			libcudaPath:   "/usr/lib64/libnvidia-ml.so.123.34",
+-			expected:      "/usr/lib64",
++			libPaths:      []string{"/usr/lib64/libnvidia-ml.so.123.34"},
++			expected:      []string{"/usr/lib64"},
++			expectedError: nil,
++		},
++		{
++			description: "locates two driver library directories",
++			libPaths: []string{
++				"/usr/lib64/libcuda.so.123.34",
++				"/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.123.34",
++			},
++			expected: []string{
++				"/usr/lib64",
++				"/usr/lib/x86_64-linux-gnu",
++			},
+ 			expectedError: nil,
+ 		},
+ 	}
+ 
+ 	for _, tc := range testCases {
+ 		t.Run(tc.description, func(t *testing.T) {
+-			driverRoot, err := setupDriverRoot(t, tc.libcudaPath)
++			driverRoot, err := setupDriverRoot(t, tc.libPaths)
+ 			require.NoError(t, err)
+ 
+ 			l := New(
+@@ -68,35 +80,41 @@ func TestLocate(t *testing.T) {
+ 				WithDriverRoot(driverRoot),
+ 			)
+ 
+-			driverLibraryPath, err := l.GetDriverLibDirectory()
+-			require.ErrorIs(t, err, tc.expectedError)
++			driverLibraryPaths, err := l.GetDriverLibDirectories()
++			if tc.expectedError != nil {
++				require.ErrorIs(t, err, tc.expectedError)
++				return
++			}
++
++			require.NoError(t, err)
+ 
+ 			// NOTE: We need to strip `/private` on MacOs due to symlink resolution
+-			stripped := strings.TrimPrefix(driverLibraryPath, "/private")
++			stripped := make([]string, len(driverLibraryPaths))
++			for i, p := range driverLibraryPaths {
++				stripped[i] = strings.TrimPrefix(p, "/private")
++			}
+ 
+-			require.Equal(t, tc.expected, stripped)
++			require.ElementsMatch(t, tc.expected, stripped)
+ 		})
+ 	}
+ }
+ 
+ // setupDriverRoot creates a folder that can be used to represent a driver root.
+-// The path to libcuda can be specified and an empty file is created at this location in the driver root.
+-func setupDriverRoot(t *testing.T, libCudaPath string) (string, error) {
++// Library paths can be specified and empty files are created at these locations in the driver root.
++func setupDriverRoot(t *testing.T, libPaths []string) (string, error) {
+ 	driverRoot := t.TempDir()
+ 
+-	if libCudaPath == "" {
+-		return driverRoot, nil
+-	}
+-
+-	if err := os.MkdirAll(filepath.Join(driverRoot, filepath.Dir(libCudaPath)), 0755); err != nil {
+-		return "", fmt.Errorf("falied to create required driver root folder: %w", err)
+-	}
++	for _, libPath := range libPaths {
++		if err := os.MkdirAll(filepath.Join(driverRoot, filepath.Dir(libPath)), 0755); err != nil {
++			return "", fmt.Errorf("failed to create required driver root folder: %w", err)
++		}
+ 
+-	libCuda, err := os.Create(filepath.Join(driverRoot, libCudaPath))
+-	if err != nil {
+-		return "", fmt.Errorf("failed to create dummy libcuda.so: %w", err)
++		f, err := os.Create(filepath.Join(driverRoot, libPath))
++		if err != nil {
++			return "", fmt.Errorf("failed to create dummy library file: %w", err)
++		}
++		f.Close()
+ 	}
+-	defer libCuda.Close()
+ 
+ 	return filepath.EvalSymlinks(driverRoot)
+ }
+diff --git a/internal/lookup/root/root.go b/internal/lookup/root/root.go
+index 3b21b24e..2866e1d5 100644
+--- a/internal/lookup/root/root.go
++++ b/internal/lookup/root/root.go
+@@ -21,6 +21,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"slices"
+ 	"strings"
+ 	"sync"
+ 
+@@ -43,8 +44,8 @@ type Driver struct {
+ 
+ 	// version caches the driver version.
+ 	version string
+-	// driverLibDirectory caches the path to parent of the driver libraries
+-	driverLibDirectory string
++	// driverLibDirectories caches the paths to parent of the driver libraries
++	driverLibDirectories []string
+ }
+ 
+ // New creates a new Driver root using the specified options.
+@@ -70,13 +71,13 @@ func New(opts ...Option) *Driver {
+ 	}
+ 
+ 	d := &Driver{
+-		logger:             o.logger,
+-		Root:               o.Root,
+-		DevRoot:            o.DevRoot,
+-		librarySearchPaths: o.librarySearchPaths,
+-		configSearchPaths:  o.configSearchPaths,
+-		version:            driverVersion,
+-		driverLibDirectory: "",
++		logger:               o.logger,
++		Root:                 o.Root,
++		DevRoot:              o.DevRoot,
++		librarySearchPaths:   o.librarySearchPaths,
++		configSearchPaths:    o.configSearchPaths,
++		version:              driverVersion,
++		driverLibDirectories: nil,
+ 	}
+ 
+ 	return d
+@@ -97,34 +98,36 @@ func (r *Driver) Version() (string, error) {
+ 	return r.version, nil
+ }
+ 
+-// GetDriverLibDirectory returns the cached directory where the driver libs are
+-// found if possible.
++// GetDriverLibDirectories returns the cached directories where the driver libs
++// are found if possible.
+ // If this has not yet been initialized, the path is first detected and then returned.
+-func (r *Driver) GetDriverLibDirectory() (string, error) {
++func (r *Driver) GetDriverLibDirectories() ([]string, error) {
+ 	r.Lock()
+ 	defer r.Unlock()
+ 
+-	if r.driverLibDirectory == "" {
++	if len(r.driverLibDirectories) == 0 {
+ 		if err := r.updateInfo(); err != nil {
+-			return "", err
++			return nil, err
+ 		}
+ 	}
+ 
+-	return r.driverLibDirectory, nil
++	return r.driverLibDirectories, nil
+ }
+ 
+ func (r *Driver) DriverLibraryLocator(additionalDirs ...string) (lookup.Locator, error) {
+-	libcudasoParentDirPath, err := r.GetDriverLibDirectory()
++	libcudasoParentDirPaths, err := r.GetDriverLibDirectories()
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to get libcuda.so parent directory: %w", err)
+ 	}
+ 
+-	searchPaths := []string{libcudasoParentDirPath}
++	searchPaths := slices.Clone(libcudasoParentDirPaths)
+ 	for _, dir := range additionalDirs {
+ 		if strings.HasPrefix(dir, "/") {
+ 			searchPaths = append(searchPaths, dir)
+ 		} else {
+-			searchPaths = append(searchPaths, filepath.Join(libcudasoParentDirPath, dir))
++			for _, libcudasoParentDirPath := range libcudasoParentDirPaths {
++				searchPaths = append(searchPaths, filepath.Join(libcudasoParentDirPath, dir))
++			}
+ 		}
+ 	}
+ 
+@@ -141,7 +144,7 @@ func (r *Driver) DriverLibraryLocator(additionalDirs ...string) (lookup.Locator,
+ }
+ 
+ func (r *Driver) updateInfo() error {
+-	driverLibPath, version, err := r.inferVersion()
++	_, version, err := r.inferVersion()
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -149,8 +152,25 @@ func (r *Driver) updateInfo() error {
+ 		return fmt.Errorf("unexpected version detected: %v != %v", r.version, version)
+ 	}
+ 
++	versionedDriverLibPaths, err := r.Libraries().Locate("lib*.so." + version)
++	if err != nil {
++		return fmt.Errorf("failed to locate versioned driver libraries: %w", err)
++	}
++
++	var uniqueDirs []string
++	seen := make(map[string]bool)
++
++	for _, path := range versionedDriverLibPaths {
++		dir := filepath.Dir(path)
++		if seen[dir] {
++			continue
++		}
++		seen[dir] = true
++		uniqueDirs = append(uniqueDirs, r.RelativeToRoot(dir))
++	}
++
+ 	r.version = version
+-	r.driverLibDirectory = r.RelativeToRoot(filepath.Dir(driverLibPath))
++	r.driverLibDirectories = uniqueDirs
+ 
+ 	return nil
+ }
+@@ -167,7 +187,7 @@ func (r *Driver) inferVersion() (string, string, error) {
+ 	for _, driverLib := range []string{"libcuda.so.", "libnvidia-ml.so."} {
+ 		driverLibPaths, err := r.Libraries().Locate(driverLib + versionSuffix)
+ 		if err != nil {
+-			errs = errors.Join(errs, fmt.Errorf("failed to locate libcuda.so: %w", err))
++			errs = errors.Join(errs, fmt.Errorf("failed to locate %q: %w", driverLib, err))
+ 			continue
+ 		}
+ 		driverLibPath := driverLibPaths[0]
+diff --git a/pkg/nvcdi/driver-nvml.go b/pkg/nvcdi/driver-nvml.go
+index dd4f2b37..75efbfe7 100644
+--- a/pkg/nvcdi/driver-nvml.go
++++ b/pkg/nvcdi/driver-nvml.go
+@@ -41,12 +41,7 @@ func (l *nvcdilib) newDriverVersionDiscoverer() (discover.Discover, error) {
+ 		return nil, fmt.Errorf("failed to determine driver version (%q): %w", version, err)
+ 	}
+ 
+-	libcudasoParentDirPath, err := l.driver.GetDriverLibDirectory()
+-	if err != nil {
+-		return nil, fmt.Errorf("failed to get libcuda.so parent path: %w", err)
+-	}
+-
+-	libraries, err := l.NewDriverLibraryDiscoverer(version, libcudasoParentDirPath)
++	libraries, err := l.NewDriverLibraryDiscoverer(version)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to create discoverer for driver libraries: %v", err)
+ 	}
+@@ -81,7 +76,7 @@ func (l *nvcdilib) newIPCDiscoverer() (discover.Discover, error) {
+ }
+ 
+ // NewDriverLibraryDiscoverer creates a discoverer for the libraries associated with the specified driver version.
+-func (l *nvcdilib) NewDriverLibraryDiscoverer(version string, libcudaSoParentDirPath string) (discover.Discover, error) {
++func (l *nvcdilib) NewDriverLibraryDiscoverer(version string) (discover.Discover, error) {
+ 	versionSuffixLibraryMounts, err := l.getVersionSuffixDriverLibraryMounts(version)
+ 	if err != nil {
+ 		return nil, err
+@@ -116,13 +111,13 @@ func (l *nvcdilib) NewDriverLibraryDiscoverer(version string, libcudaSoParentDir
+ 	disableDeviceNodeModification := l.hookCreator.Create(DisableDeviceNodeModificationHook)
+ 	discoverers = append(discoverers, disableDeviceNodeModification)
+ 
+-	driverLibDirectory, err := l.driver.GetDriverLibDirectory()
++	driverLibDirectories, err := l.driver.GetDriverLibDirectories()
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to get libcuda.so parent directory path: %w", err)
+ 	}
+ 	environmentVariable := &discover.EnvVar{
+ 		Name:  "NVIDIA_CTK_LIBCUDA_DIR",
+-		Value: driverLibDirectory,
++		Value: strings.Join(driverLibDirectories, string(filepath.ListSeparator)),
+ 	}
+ 	discoverers = append(discoverers, environmentVariable)
+ 
