@@ -9,7 +9,7 @@ Vcs-Browser: https://github.com/NVIDIA/nvidia-container-toolkit
 Build-Depends: debhelper (>= 9), dh-golang, golang-go
 
 Package: nvidia-container-toolkit
-Architecture: any
+Architecture: amd64 arm64
 Depends: ${misc:Depends}, nvidia-container-toolkit-base (= ${binary:Version}), libnvidia-container-tools (>= 1.19.0), libnvidia-container-tools (<< 2.0.0)
 Breaks: nvidia-container-runtime (<= 3.5.0-1), nvidia-container-runtime-hook
 Replaces: nvidia-container-runtime (<= 3.5.0-1), nvidia-container-runtime-hook
@@ -17,7 +17,7 @@ Description: NVIDIA Container toolkit
  Provides tools and utilities to enable GPU support in containers.
 
 Package: nvidia-container-toolkit-base
-Architecture: any
+Architecture: amd64 arm64
 Depends: ${misc:Depends}
 Breaks: nvidia-container-runtime (<= 3.5.0-1), nvidia-container-runtime-hook, nvidia-container-toolkit (<= 1.10.0-1)
 Replaces: nvidia-container-runtime (<= 3.5.0-1), nvidia-container-runtime-hook
@@ -26,7 +26,7 @@ Description: NVIDIA Container Toolkit Base
  Toolkit CLI to enable GPU support in containers.
 
 Package: nvidia-container-toolkit-operator-extensions
-Architecture: any
+Architecture: amd64 arm64
 Depends: ${misc:Depends}, nvidia-container-toolkit-base (= ${binary:Version})
 Description: NVIDIA Container Toolkit Operator Extensions
  Provides tools for using the NVIDIA Container Toolkit with the GPU Operator
