@@ -5,6 +5,8 @@
 
 export GO111MODULE=on
 export GOTOOLCHAIN=local
+export GOCACHE := $(CURDIR)/.gocache
+export GOPATH := $(CURDIR)/.gopath
 
 %:
 	dh $@ --buildsystem=golang
@@ -34,6 +36,7 @@ override_dh_auto_build:
 override_dh_auto_clean:
 	rm -f nvidia-ctk nvidia-container-runtime nvidia-container-runtime-hook nvidia-cdi-hook
 	rm -f nvidia-container-runtime.cdi nvidia-container-runtime.legacy
+	rm -rf .gocache .gopath
 
 override_dh_fixperms:
 	dh_fixperms
