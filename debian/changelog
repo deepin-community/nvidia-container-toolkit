@@ -1,3 +1,10 @@
+nvidia-container-toolkit (1.19.1-1deepin3) unstable; urgency=medium
+
+  * Fix Go build cache failure by setting GOCACHE to a writable
+    directory
+
+ -- lichenggang <lichenggang@uniontech.com>  Wed, 22 Jul 2026 22:20:17 +0800
+
 nvidia-container-toolkit (1.19.1-1deepin2) unstable; urgency=medium
 
   * Add debian/patchs/allow-multiple-driver-library-paths.patch
