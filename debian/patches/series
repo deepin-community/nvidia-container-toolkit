@@ -1,3 +1,4 @@
 downgrade-go-version.patch
 fix-go-122-compatibility.patch
 allow-multiple-driver-library-paths.patch
+allow-nvidia-driver-without-nvidia-smi.patch
