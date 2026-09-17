@@ -1,3 +1,9 @@
+nvidia-container-toolkit (1.19.1-1deepin4) unstable; urgency=medium
+
+  * fix: allow nvidia-cdi-refresh without nvidia-smi.
+
+ -- dengbo <dengbo@deepin.org>  Fri, 18 Sep 2026 09:29:15 +0800
+
 nvidia-container-toolkit (1.19.1-1deepin3) unstable; urgency=medium
 
   * Fix Go build cache failure by setting GOCACHE to a writable
