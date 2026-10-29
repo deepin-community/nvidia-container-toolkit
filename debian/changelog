@@ -1,3 +1,9 @@
+nvidia-container-toolkit (1.19.1-1deepin5) unstable; urgency=medium
+
+  * fix: handle systemd state in Debian postinst
+
+ -- dengbo <dengbo@deepin.org>  Thu, 29 Oct 2026 21:31:35 +0800
+
 nvidia-container-toolkit (1.19.1-1deepin4) unstable; urgency=medium
 
   * fix: allow nvidia-cdi-refresh without nvidia-smi.
